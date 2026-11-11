@@ -16,8 +16,36 @@ export async function prepare(kindKey, rec) {
 
 export async function makeFile(kindKey, rec, fmt) {
   const { slides, photos, meta } = await prepare(kindKey, rec);
-  if (fmt === 'pptx') return (await import('./exportPptx.js')).pptxBlob(slides, photos, meta);
-  return (await import('./exportPdf.js')).pdfBlob(slides, photos, meta);
+  const blob = fmt === 'pptx'
+    ? await (await import('./exportPptx.js')).pptxBlob(slides, photos, meta)
+    : await (await import('./exportPdf.js')).pdfBlob(slides, photos, meta);
+  return new Blob([blob], { type: MIME[fmt] });
+}
+
+/**
+ * One file holding several saved records: all their slides, in the order given.
+ * onProgress(done, total) is called after each record's photos are loaded.
+ */
+export async function makeCombined(kindKey, recs, fmt, onProgress) {
+  const K = KINDS[kindKey];
+  const slides = [];
+  const photos = {};
+  let n = 0;
+  for (const rec of recs) {
+    const s = K.slides(cleanForExport(rec));
+    for (const id of slidePhotoIds(s)) {
+      if (photos[id]) continue;
+      const p = await loadExportPhoto(id);
+      if (p) photos[id] = p;
+    }
+    slides.push(...s);
+    onProgress && onProgress(++n, recs.length);
+  }
+  const meta = { title: `${K.plural} (${recs.length})` };
+  const blob = fmt === 'pptx'
+    ? await (await import('./exportPptx.js')).pptxBlob(slides, photos, meta)
+    : await (await import('./exportPdf.js')).pdfBlob(slides, photos, meta);
+  return new Blob([blob], { type: MIME[fmt] });
 }
 
 export const MIME = {

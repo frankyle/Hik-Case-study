@@ -5,12 +5,16 @@ import { openDB, dbAll, dbPut, dbDel, isMemMode } from './lib/db.js';
 import { deletePhotos, clonePhoto, photoKeys, collectGarbage } from './lib/photos.js';
 import { seedOnce } from './lib/seed.js';
 import { makeBackup, restoreBackup } from './lib/backup.js';
-import { makeFile, MIME } from './lib/exporter.js';
-import { uid, seq, saveBlob } from './lib/helpers.js';
+import { makeFile, makeCombined, MIME } from './lib/exporter.js';
+import { uid, seq, saveBlob, safeName, today } from './lib/helpers.js';
+import { useIsMobile } from './hooks/useIsMobile.js';
 import RecordList from './components/RecordList.jsx';
 import RecordForm from './components/RecordForm.jsx';
 import PreviewModal, { buildSlides, usePhotoUrls } from './components/PreviewModal.jsx';
 import SlideView from './components/SlideView.jsx';
+import MobileList from './components/MobileList.jsx';
+import Sheet, { SheetRow } from './components/Sheet.jsx';
+import { IcCase, IcCap, IcPlus, IcMore, IcDownload, IcEye, IcSend, IcEdit, IcCopy, IcTrash, IcLayers, IcCloud, IcFile } from './components/Icons.jsx';
 
 const sortItems = (a) => a.sort((x, y) => (y.date || '').localeCompare(x.date || '') || (y.updated || 0) - (x.updated || 0));
 
@@ -49,6 +53,9 @@ export default function App() {
   const [toastMsg, setToastMsg] = useState('');
   const [preview, setPreview] = useState(null);
   const [printJob, setPrintJob] = useState(null);
+  const [sheet, setSheet] = useState(null);   // phone bottom sheet: {type:'rec'|'form'|'more', ...}
+  const mobile = useIsMobile();
+  const busyRef = useRef(false);
   const [mail, setMail] = useState(() => { try { return localStorage.getItem('hik_mail') || ''; } catch (_) { return ''; } });
   const pending = useRef({ added: new Set(), removed: new Set() });
   const toastT = useRef(null);
@@ -105,12 +112,30 @@ export default function App() {
 
   /* ---------- exports ---------- */
   const download = async (kind, r, fmt) => {
+    if (busyRef.current) return;
+    busyRef.current = true;
     const name = KINDS[kind].file(r);
     toast(`Building ${fmt.toUpperCase()}…`, 0);
     try {
       saveBlob(await makeFile(kind, r, fmt), `${name}.${fmt}`);
       toast(`Downloaded ${name}.${fmt}`);
     } catch (e) { console.error(e); toast(e.message || 'Export failed', 5000); }
+    finally { busyRef.current = false; }
+  };
+  /** Every saved entry of this tab in ONE pptx / pdf (newest first, as listed). */
+  const downloadAll = async (kind, fmt, list) => {
+    if (busyRef.current) return;
+    const recs = list || items[kind];
+    if (!recs.length) { toast('Nothing saved yet'); return; }
+    busyRef.current = true;
+    const name = `Hikvision_${safeName(KINDS[kind].plural)}_all_${today()}.${fmt}`;
+    toast(`Building ${fmt.toUpperCase()}…`, 0);
+    try {
+      const blob = await makeCombined(kind, recs, fmt, (i, n) => toast(`Building ${fmt.toUpperCase()}: ${i} of ${n} entries…`, 0));
+      saveBlob(blob, name);
+      toast(`Downloaded ${name} (${recs.length} entries)`, 4500);
+    } catch (e) { console.error(e); toast(e.message || 'Export failed', 5000); }
+    finally { busyRef.current = false; }
   };
   const send = async (kind, r) => {
     const K = KINDS[kind], name = K.file(r) + '.pptx';
@@ -156,6 +181,12 @@ export default function App() {
     else if (act === 'send') send(tab, saved);
     else download(tab, saved, act);
   };
+  // Save first so the combined file includes the entry being edited, then build it from the database.
+  const onFormAll = async (fmt) => {
+    await persist();
+    const list = sortItems(await dbAll(tab));
+    downloadAll(tab, fmt, list);
+  };
 
   /* ---------- preview modal actions ---------- */
   const onPreviewAct = async (act) => {
@@ -181,6 +212,106 @@ export default function App() {
 
   if (!ready) return <div className="boot">Loading…</div>;
 
+  const K = KINDS[tab];
+  const closeSheet = () => setSheet(null);
+  const sheetRec = sheet && sheet.type === 'rec' ? sheet.rec : null;
+  const act = (fn) => () => { closeSheet(); fn(); };
+
+  if (mobile) {
+    return (
+      <div className={'m-app' + (mode === 'form' ? ' in-form' : '')}>
+        {mode === 'list' && (
+          <>
+            <header className="m-hero">
+              <div className="m-hero-top">
+                <span className="m-brand">HIKVISION</span>
+                <button className="m-round dark" onClick={() => setSheet({ type: 'more' })} aria-label="Settings and backup"><IcMore size={22} /></button>
+              </div>
+              <h1>Field Reports</h1>
+              <p>{items[tab].length} saved {items[tab].length === 1 ? K.label.toLowerCase() : K.plural.toLowerCase()}</p>
+              <div className="m-seg" role="tablist">
+                {Object.entries(KINDS).map(([k, v]) => (
+                  <button key={k} role="tab" aria-selected={tab === k} onClick={() => switchTab(k)}>
+                    {k === 'cases' ? <IcCase size={18} /> : <IcCap size={18} />} {k === 'cases' ? 'Support' : 'Training'}
+                  </button>
+                ))}
+              </div>
+            </header>
+            <main className="m-main">
+              <MobileList tab={tab} items={items[tab]} memMode={isMemMode()} onNew={newRecord} onAct={onListAct}
+                onAll={(fmt) => downloadAll(tab, fmt)} onOpenSheet={(r) => setSheet({ type: 'rec', rec: r })} />
+            </main>
+            <nav className="m-nav" aria-label="Main">
+              <button aria-current={tab === 'cases'} onClick={() => switchTab('cases')}><IcCase size={22} /><span>Support</span></button>
+              <button aria-current={tab === 'trainings'} onClick={() => switchTab('trainings')}><IcCap size={22} /><span>Training</span></button>
+              <button className="m-fab" onClick={newRecord} aria-label={K.newLabel}><IcPlus size={28} /></button>
+              <button onClick={() => items[tab].length ? setSheet({ type: 'all' }) : toast('Nothing saved yet')}><IcLayers size={22} /><span>Export all</span></button>
+              <button onClick={() => setSheet({ type: 'more' })}><IcMore size={22} /><span>More</span></button>
+            </nav>
+          </>
+        )}
+        {mode === 'form' && (
+          <main className="m-main m-formmain">
+            <RecordForm mobile tab={tab} rec={rec} setRec={setRecDirty} isNew={isNew} pending={pending} toast={toast}
+              onBack={async () => { if (await leaveForm()) { setMode('list'); setDirty(false); } }}
+              onSave={async () => { await persist(); toast('Saved on this device'); }} onAct={onFormAct} onAll={onFormAll}
+              onMenu={() => setSheet({ type: 'form' })} />
+          </main>
+        )}
+
+        {sheetRec && (
+          <Sheet title={K.title(sheetRec)} subtitle={K.meta(sheetRec).join('  ·  ')} onClose={closeSheet}>
+            <p className="m-sh-lab">Download this report</p>
+            <SheetRow tone="primary" icon={<IcDownload />} label="PowerPoint (.pptx)" sub="Opens in PowerPoint, Keynote, Google Slides" onClick={act(() => download(tab, sheetRec, 'pptx'))} />
+            <SheetRow tone="primary" icon={<IcDownload />} label="PDF (.pdf)" sub="Best for WhatsApp and email" onClick={act(() => download(tab, sheetRec, 'pdf'))} />
+            <p className="m-sh-lab">More</p>
+            <SheetRow icon={<IcEye />} label="Preview" onClick={act(() => setPreview({ tab, rec: sheetRec }))} />
+            <SheetRow icon={<IcSend />} label="Send to me" sub="Share sheet or email" onClick={act(() => send(tab, sheetRec))} />
+            <SheetRow icon={<IcEdit />} label="Edit" onClick={act(() => onListAct('edit', sheetRec))} />
+            <SheetRow icon={<IcCopy />} label="Duplicate" onClick={act(() => onListAct('dup', sheetRec))} />
+            <SheetRow tone="danger" icon={<IcTrash />} label="Delete" onClick={act(() => onListAct('del', sheetRec))} />
+          </Sheet>
+        )}
+        {sheet && sheet.type === 'form' && (
+          <Sheet title="Save & download" subtitle="Your entry is saved first, then the file is built." onClose={closeSheet}>
+            <p className="m-sh-lab">This report</p>
+            <SheetRow tone="primary" icon={<IcDownload />} label="PowerPoint (.pptx)" onClick={act(() => onFormAct('pptx'))} />
+            <SheetRow tone="primary" icon={<IcDownload />} label="PDF (.pdf)" onClick={act(() => onFormAct('pdf'))} />
+            <p className="m-sh-lab">All saved entries in one file</p>
+            <SheetRow icon={<IcLayers />} label="All entries, PowerPoint" sub={`${items[tab].length + (isNew ? 1 : 0)} ${K.plural.toLowerCase()} combined`} onClick={act(() => onFormAll('pptx'))} />
+            <SheetRow icon={<IcLayers />} label="All entries, PDF" onClick={act(() => onFormAll('pdf'))} />
+            <p className="m-sh-lab">More</p>
+            <SheetRow icon={<IcEye />} label="Preview report" onClick={act(() => onFormAct('preview'))} />
+            <SheetRow icon={<IcSend />} label="Send to me" onClick={act(() => onFormAct('send'))} />
+          </Sheet>
+        )}
+        {sheet && sheet.type === 'all' && (
+          <Sheet title={`All ${items[tab].length} ${K.plural.toLowerCase()}`} subtitle="Every saved entry combined into one file." onClose={closeSheet}>
+            <SheetRow tone="primary" icon={<IcLayers />} label="One PowerPoint (.pptx)" sub="All entries, one slide set" onClick={act(() => downloadAll(tab, 'pptx'))} />
+            <SheetRow tone="primary" icon={<IcLayers />} label="One PDF (.pdf)" sub="All entries, one document" onClick={act(() => downloadAll(tab, 'pdf'))} />
+          </Sheet>
+        )}
+        {sheet && sheet.type === 'more' && (
+          <Sheet title="Settings & backup" onClose={closeSheet}>
+            <label className="m-field">Send reports to
+              <input type="email" value={mail} placeholder="your email address" autoComplete="email" inputMode="email"
+                onChange={(e) => { setMail(e.target.value); try { localStorage.setItem('hik_mail', e.target.value.trim()); } catch (_) { /* ignore */ } }} />
+            </label>
+            <SheetRow icon={<IcCloud />} label="Back up data" sub="One file with records and original photos" onClick={act(backup)} />
+            <label className="m-row">
+              <span className="m-row-ic"><IcFile /></span>
+              <span className="m-row-t"><b>Restore from backup</b><small>Choose a backup .json file</small></span>
+              <input type="file" accept=".json,application/json" hidden onChange={(e) => { closeSheet(); restore(e); }} />
+            </label>
+          </Sheet>
+        )}
+
+        {preview && <PreviewModal job={preview} onClose={() => setPreview(null)} onAction={onPreviewAct} onAll={(f) => downloadAll(preview.tab, f)} />}
+        {toastMsg && <div className="toast m-toast">{toastMsg}</div>}
+      </div>
+    );
+  }
+
   return (
     <>
       <header className="top">
@@ -200,12 +331,12 @@ export default function App() {
       </nav>
       <main>
         {mode === 'list'
-          ? <RecordList tab={tab} items={items[tab]} memMode={isMemMode()} onNew={newRecord} onAct={onListAct} />
+          ? <RecordList tab={tab} items={items[tab]} memMode={isMemMode()} onNew={newRecord} onAct={onListAct} onAll={(fmt) => downloadAll(tab, fmt)} />
           : <RecordForm tab={tab} rec={rec} setRec={setRecDirty} isNew={isNew} pending={pending} toast={toast}
               onBack={async () => { if (await leaveForm()) { setMode('list'); setDirty(false); } }}
-              onSave={async () => { await persist(); toast('Saved on this device'); }} onAct={onFormAct} />}
+              onSave={async () => { await persist(); toast('Saved on this device'); }} onAct={onFormAct} onAll={onFormAll} />}
       </main>
-      {preview && <PreviewModal job={preview} onClose={() => setPreview(null)} onAction={onPreviewAct} />}
+      {preview && <PreviewModal job={preview} onClose={() => setPreview(null)} onAction={onPreviewAct} onAll={(f) => downloadAll(preview.tab, f)} />}
       {printJob && <PrintArea job={printJob} onDone={() => setPrintJob(null)} />}
       {toastMsg && <div className="toast">{toastMsg}</div>}
     </>

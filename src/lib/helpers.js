@@ -27,13 +27,29 @@ export const fmtBytes = (n) => {
   if (n < 1048576) return (n / 1024).toFixed(0) + ' KB';
   return (n / 1048576).toFixed(1) + ' MB';
 };
+const MIME_BY_EXT = {
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  pdf: 'application/pdf',
+  json: 'application/json',
+};
+/**
+ * Saves a blob as a file. The blob is always re-labelled with the MIME type that matches the file
+ * extension: pptxgenjs/JSZip hand back "application/zip", and phone browsers trust that type over the
+ * ".pptx" name, which is why phones used to save a .zip instead of a PowerPoint file.
+ */
 export function saveBlob(blob, name) {
+  const ext = String(name).split('.').pop().toLowerCase();
+  const type = MIME_BY_EXT[ext] || blob.type || 'application/octet-stream';
+  const file = blob.type === type ? blob : new Blob([blob], { type });
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
+  const url = URL.createObjectURL(file);
+  a.href = url;
   a.download = name;
+  a.rel = 'noopener';
+  a.style.display = 'none';
   document.body.appendChild(a);
   a.click();
-  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000);
+  setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 60000);
 }
 export function bytesToBase64(bytes) {
   let s = '';
