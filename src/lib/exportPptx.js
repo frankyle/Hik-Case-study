@@ -1,6 +1,7 @@
 import { W, H, C, imagePlacement } from './geometry.js';
 import { bytesToBase64 } from './helpers.js';
 
+const PPTX_MIME = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
 const IN = 13.333 / W;   // canvas px -> inches
 const PT = 0.754;        // canvas px -> points
 
@@ -69,5 +70,7 @@ export async function buildPptx(slides, photos, meta = {}, PptxGenJS) {
 
 export async function pptxBlob(slides, photos, meta) {
   const p = await buildPptx(slides, photos, meta);
-  return p.write({ outputType: 'blob' });
+  const out = await p.write({ outputType: 'blob' });
+  // JSZip labels its output "application/zip"; relabel it as a real PowerPoint file.
+  return new Blob([out], { type: PPTX_MIME });
 }

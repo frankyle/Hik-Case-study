@@ -12,6 +12,7 @@ button,input,select,textarea{font:inherit;color:inherit}
 .top{background:var(--dark);color:#fff;display:flex;flex-wrap:wrap;align-items:center;gap:12px 24px;padding:12px 20px}
 .brand{font-weight:800;font-style:italic;letter-spacing:.5px;color:var(--red);font-size:22px;background:#fff;padding:2px 12px;border-radius:3px}
 .top h1{font-size:17px;font-weight:600;margin:0;flex:1;min-width:160px}
+.top .btn{color:var(--ink)}
 .top .mail{display:flex;align-items:center;gap:8px;font-size:13px}
 .top .mail input{width:210px;padding:6px 9px;border-radius:5px;border:1px solid #5b6c74;background:#22303a;color:#fff}
 .top .mail input::placeholder{color:#93a4ac}

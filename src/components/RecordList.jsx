@@ -6,11 +6,20 @@ function Thumb({ id }) {
   return <div className="th">{url ? <img src={url} alt="" /> : 'No photo'}</div>;
 }
 
-export default function RecordList({ tab, items, memMode, onNew, onAct }) {
+export default function RecordList({ tab, items, memMode, onNew, onAct, onAll }) {
   const K = KINDS[tab];
   return (
     <>
-      <div className="bar"><h2>{K.plural}</h2><button className="btn primary" onClick={onNew}>+ {K.newLabel}</button></div>
+      <div className="bar">
+        <h2>{K.plural}</h2>
+        {items.length > 0 && (
+          <>
+            <button className="btn" onClick={() => onAll('pptx')} title="All saved entries in one PowerPoint file">Download all ({items.length}) PPTX</button>
+            <button className="btn" onClick={() => onAll('pdf')} title="All saved entries in one PDF file">Download all ({items.length}) PDF</button>
+          </>
+        )}
+        <button className="btn primary" onClick={onNew}>+ {K.newLabel}</button>
+      </div>
       {memMode && <div className="note">This browser blocked local storage, so your records and photos will disappear when you close the tab. Open the app in a normal (not private) window to keep them.</div>}
       {!items.length && (
         <div className="empty">
